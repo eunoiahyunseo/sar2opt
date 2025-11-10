@@ -2,6 +2,7 @@ import torch
 import open_clip
 from PIL import Image, ImageEnhance, Image as PILImage # ImageEnhance 추가, PILImage 추가
 import numpy as np
+import torch.nn.functional as F
 
 # --- 설정 (Configuration) ---
 # 사용할 디바이스 설정
@@ -9,12 +10,12 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE}")
 
 # 모델 가중치 경로
-COCA_CHECKPOINT_PATH = "/home/hyunseo/workspace/kari/SAR-RS-CoCa.pt"
-CLIP_CHECKPOINT_PATH = "/home/hyunseo/workspace/kari/SAR-RS-CLIP.pt"
+COCA_CHECKPOINT_PATH = "/home/hyunseo/workspace/sar2opt/SAR2OPT/SAR-RS-CoCa.pt"
+CLIP_CHECKPOINT_PATH = "/home/hyunseo/workspace/sar2opt/SAR2OPT/SAR-RS-CLIP.pt"
 
 # 평가할 SAR 이미지 경로 (예시)
 # 이 부분을 실제 평가하고 싶은 SAR 이미지 경로로 변경하세요.
-IMAGE_PATH = "/home/hyunseo/workspace/kari/SeeSR/4.png"
+IMAGE_PATH = "/home/hyunseo/workspace/sar2opt/test_img/image1.png"
 
 # 밝기 조절 계수 (1.0 = 원본, 1.5 = 50% 밝게)
 BRIGHTNESS_FACTOR = 1.0 # 기본값은 원본 밝기
@@ -33,6 +34,7 @@ def load_coca_model(checkpoint_path, device):
         device=device,
         weights_only=False # 전체 모델 구조를 불러오기 위해 False로 설정
     )
+
     model.eval()
     print("CoCa model loaded.")
     return model, transform
@@ -48,6 +50,7 @@ def load_clip_model(checkpoint_path, device):
         cache_dir='cache/weights/open_clip'
     )
 
+
     # 학습된 가중치 로드
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['state_dict'])
@@ -55,6 +58,7 @@ def load_clip_model(checkpoint_path, device):
 
     # 텍스트 토크나이저
     tokenizer = open_clip.get_tokenizer('ViT-L-14')
+
 
     print("CLIP model loaded.")
     return model, preprocess, tokenizer
@@ -95,7 +99,7 @@ def generate_caption(image_path, coca_model, coca_transform, device, resize_dim=
 
         with torch.no_grad(), torch.amp.autocast("cuda"):
             # generation_type을 다시 top_k나 top_p 등으로 설정할 수 있습니다.
-            generated = coca_model.generate(image_tensor, generation_type="beam_search", seq_len=40)
+            generated = coca_model.generate(image_tensor, generation_type="top_p", max_seq_len=40, min_seq_len=2)
 
         caption = open_clip.decode(generated[0]).split("<end_of_text>")[0].replace("<start_of_text>", "").strip()
 
@@ -115,33 +119,28 @@ def calculate_similarity(image_path, caption, clip_model, clip_preprocess, clip_
         return None
 
     print(f"Calculating similarity between original image and caption...")
-    try:
-        # 유사도 계산 시에는 원본 이미지를 사용합니다.
-        image = Image.open(image_path).convert("RGB")
-        image_tensor = clip_preprocess(image).unsqueeze(0).to(device)
-        text_tokens = clip_tokenizer([caption]).to(device)
 
-        with torch.no_grad():
-            image_features = clip_model.encode_image(image_tensor)[0]
-            image_features2 = clip_model.encode_image(image_tensor)[1]
-            print('image_features shape', image_features.shape)
-            print('image_features2 shape', image_features2.shape)
+    # 유사도 계산 시에는 원본 이미지를 사용합니다.
+    image = Image.open(image_path).convert("RGB")
+    image_tensor = clip_preprocess(image).unsqueeze(0).to(device)
+    text_tokens = clip_tokenizer([caption]).to(device)
+    print(text_tokens)
 
-            
-            text_features = clip_model.encode_text(text_tokens)
+    image_features = F.normalize(clip_model.encode_image(image_tensor)[0], dim=-1) # [1, 768]
+    image_features2 = F.normalize(clip_model.encode_image(image_tensor)[1], dim=-1) # [1, 256, 1024]
 
-            # 정규화 (중요)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            text_features /= text_features.norm(dim=-1, keepdim=True)
+    text_features = F.normalize(clip_model.encode_text(text_tokens)[0], dim=-1) # [1, 768]
+    text_features2 = F.normalize(clip_model.encode_text(text_tokens)[1], dim=-1) # [1, 77, 768]
 
-            # 코사인 유사도 계산 (dot product)
-            similarity_score = (image_features @ text_features.T).item()
+    # 정규화 (중요)
+    image_features /= image_features.norm(dim=-1, keepdim=True)
+    text_features /= text_features.norm(dim=-1, keepdim=True)
 
-        print(f"  -> CLIP Similarity Score: {similarity_score:.4f}")
-        return similarity_score
-    except FileNotFoundError:
-        print(f"Error: Image file not found at {image_path}")
-        return None
+    # 코사인 유사도 계산 (dot product)
+    similarity_score = (image_features @ text_features.T).item()
+    
+    return similarity_score
+
 
 
 # --- 스크립트 실행 ---
@@ -157,6 +156,7 @@ if __name__ == "__main__":
     if generated_caption:
         # 여기에 비교할 캡션을 직접 넣거나, 생성된 캡션을 사용할 수 있습니다.
         comparison_caption = generated_caption
+        # comparison_caption = "A furry bear"
         similarity = calculate_similarity(IMAGE_PATH, comparison_caption, clip_model, clip_preprocess, clip_tokenizer, DEVICE)
 
         if similarity is not None:

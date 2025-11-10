@@ -1,0 +1,15 @@
+{
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": [],
+    "python.analysis.exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/logs", // 로그 폴더가 있다면
+    "**/data", // 데이터 폴더가 있다면
+    "**/checkpoints",
+    "**/cache",
+    "**/dataset",
+    ".venv" // 가상 환경 폴더 (보통 Pylance가 자동 감지하지만 명시)
+  ],
+}

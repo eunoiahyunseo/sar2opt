@@ -251,11 +251,15 @@ output_image/
 
 # 2. 의심되는 대용량 폴더
 cache/
-models/
 utils_data/
+
+
+dataset/
+save_fig/
 
 # 3. 기타 (파이썬 프로젝트 기본)
 __pycache__/
 *.pyc
 venv/
 .env
+
